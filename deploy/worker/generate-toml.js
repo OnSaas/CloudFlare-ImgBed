@@ -1,12 +1,12 @@
 /**
  * 根据环境变量生成 deploy/worker/wrangler.toml
  * 用于 GitHub Actions 部署，从 Secrets/Variables 读取配置
- * 
+ *
  * 环境变量：
  *   WORKER_NAME      - Worker 名称（默认 cloudflare-imgbed）
- *   D1_DATABASE_ID   - D1 数据库 ID
- *   KV_NAMESPACE_ID  - KV 命名空间 ID
- *   R2_BUCKET_NAME   - R2 存储桶名称
+ *   D1_DATABASE_ID   - D1 数据库 ID（本仓库不使用 D1，元数据走 KV）
+ *   KV_NAMESPACE_ID  - KV 命名空间 ID（默认取仓库内固定值）
+ *   R2_BUCKET_NAME   - R2 存储桶名称（默认取仓库内固定值）
  *   WORKER_VARS      - JSON 格式的业务环境变量
  */
 
@@ -19,6 +19,14 @@ const outputPath = join(__dirname, 'wrangler.toml');
 
 const env = process.env;
 const name = env.WORKER_NAME || 'cloudflare-imgbed';
+
+// 仓库默认绑定：元数据一律走 KV，不用 D1
+// CI 里可用同名 Secret 覆盖，未配置时回落到这里的值
+const DEFAULT_KV_NAMESPACE_ID = '6c401946aba545b8be20ed1f17f3ba57';
+const DEFAULT_R2_BUCKET_NAME = 'imgbed-r2';
+
+const kvNamespaceId = env.KV_NAMESPACE_ID || DEFAULT_KV_NAMESPACE_ID;
+const r2BucketName = env.R2_BUCKET_NAME || DEFAULT_R2_BUCKET_NAME;
 
 let toml = `name = "${name}"
 main = "index.js"
@@ -34,33 +42,22 @@ not_found_handling = "single-page-application"
 binding = "IMAGES"
 `;
 
-// D1 数据库
-if (env.D1_DATABASE_ID) {
-    toml += `
-[[d1_databases]]
-binding = "img_d1"
-database_name = "img_d1"
-database_id = "${env.D1_DATABASE_ID}"
-`;
-}
+// 本仓库固定使用 KV 存元数据，不再支持通过 D1_DATABASE_ID 注入 D1。
+// 如需切回 D1，请同时修改 functions/utils/databaseAdapter.js 的判定优先级。
 
-// KV 命名空间
-if (env.KV_NAMESPACE_ID) {
-    toml += `
+// KV 命名空间（默认启用）
+toml += `
 [[kv_namespaces]]
 binding = "img_url"
-id = "${env.KV_NAMESPACE_ID}"
+id = "${kvNamespaceId}"
 `;
-}
 
-// R2 存储桶
-if (env.R2_BUCKET_NAME) {
-    toml += `
+// R2 存储桶（默认启用）
+toml += `
 [[r2_buckets]]
 binding = "img_r2"
-bucket_name = "${env.R2_BUCKET_NAME}"
+bucket_name = "${r2BucketName}"
 `;
-}
 
 // 业务环境变量（从 JSON 解析）
 if (env.WORKER_VARS) {
